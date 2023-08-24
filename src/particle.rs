@@ -1,9 +1,9 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, math::{Vec3A, Mat3A}};
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Particle {
-    x: Vec3,
-    v: Vec3,    // velocity
-    C: Mat3,     // affine momentum matrix
-    m: f32,     // mass
+    pub x: Vec3A,
+    pub v: Vec3A,    // velocity
+    pub C: Mat3A,     // affine momentum matrix
+    pub m: f32,     // mass
 }
