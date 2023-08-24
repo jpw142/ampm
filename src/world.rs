@@ -9,7 +9,7 @@ const chunk_width: usize = 8;
 const chunk_nodes: usize = chunk_width * chunk_width * chunk_width;
 
 #[derive(Component, Debug, Clone, Copy,)]
-struct Node {
+pub struct Node {
     // https://github.com/rust-lang/rust/issues/72353 
     v: Vec3,    // velocity Z 
     m: f32,     // mass
@@ -38,7 +38,7 @@ pub struct Chunk{
 }
 
 impl World {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut world = World{chunks: vec![]};
         for x in 0..map_width {
             for y in 0..map_width {

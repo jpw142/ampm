@@ -7,6 +7,8 @@ mod cam;
 mod particle;
 mod world;
 
+use crate::world::World;
+
 const dt: f32 = 0.4;
 const sim_iterations: i32 = (1./dt) as i32;
 
@@ -32,6 +34,54 @@ fn main() {
                 ))
         .insert_resource(World::new())
         .insert_resource(ClearColor(Color::rgb(1., 1., 1.)))
+        .add_systems(Update, clear_grid)
         .run();
 }
 
+// This is fast enough
+fn clear_grid(
+    mut world: ResMut<World>
+) {
+    world.chunks.par_iter_mut().for_each(|chunk| {
+        for mut node in chunk.lock().unwrap().nodes {
+            node.zero();
+        }
+    })
+}
+
+fn p2g1 (
+    mut world: ResMut<World>
+) {
+    for x_selected in 0..3 {
+        for y_selected in 0..3 {
+            for z_selected in 0..3 {
+                world.chunks.par_iter_mut().for_each(|chunk| {
+                    let chunk = chunk.lock().unwrap();
+                    let pos_x = chunk.pos.x % 3;
+                    let pos_y = chunk.pos.y % 3;
+                    let pos_z = chunk.pos.z % 3;
+                    // Buffer 2 blocks between active chunks so they don't access the same chunks
+                    if (pos_x != x_selected) || (pos_y != y_selected) || (pos_z != z_selected) {
+                        return;
+                    }
+                })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            }
+        }
+    }
+
+}
