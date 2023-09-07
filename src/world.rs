@@ -61,6 +61,12 @@ impl Chunk {
         let index = (x as usize * width * width) + (y as usize * width) + z as usize;
         return index
     }
+    pub fn pos_from_index(width: usize, i: usize) -> IVec3{
+        let x = i / (width * width);
+        let y = (i % (width * width)) / width;
+        let z = i % width;
+        IVec3::new(x as i32, y as i32, z as i32)
+    }
 }
 
 impl World {
@@ -144,7 +150,7 @@ impl World {
 }
 #[cfg(test)]
 mod tests {
-    use bevy::math::Vec3A;
+    use bevy::{math::Vec3A, prelude::IVec3};
     use crate::world::Chunk;
     use super::World;
 
@@ -171,6 +177,7 @@ mod tests {
             }
         });
     }
+
     #[test]
     fn in_bounds_works() {
         let mut numbers = vec![];
@@ -211,6 +218,14 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn get_index_works() {
+        let pos = IVec3::new(42, 42, 42);
+        let index = Chunk::get_index(43, pos.x, pos.y, pos.z);
+        let pos2 = Chunk::pos_from_index(43, index);
+        assert!(pos == pos2);
     }
     // Write two more tests, 1 for get_surrounding chunks and 1 for making sure loopert works
 }

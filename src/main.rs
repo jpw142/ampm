@@ -40,7 +40,8 @@ fn main() {
                 ))
         .insert_resource(World::new())
         .insert_resource(ClearColor(Color::rgb(1., 1., 1.)))
-        .add_systems(Update, (clear_grid,p2g1).chain())
+        .add_systems(Startup, initialize)
+        .add_systems(Update, (clear_grid, p2g1, p2g2, update_grid, g2p).chain())
         .run();
 }
 
@@ -49,6 +50,9 @@ fn initialize (
 ) {
     world.chunks.par_iter().for_each(|(_, c)| {
         let mut chunk = c.lock().unwrap();
+        if chunk.update == false {
+            return;
+        }
         for x in 0..Chunk::width {
             for y in 0..Chunk::width {
                 for z in 0..Chunk::width {
@@ -159,14 +163,299 @@ fn p2g1 (
 
 fn p2g2 (
     world: ResMut<World>,
-) {
+    ) {
+    for n in 0..Chunk::loopert_width*Chunk::loopert_width*Chunk::loopert_width {
+        world.chunks.par_iter().for_each(|(&i, c)| {
+            let ch = c.lock().unwrap();
+
+            // If chunk shouldn't be updated or isn't part of the current batch don't do them
+            if !ch.update {
+                return;
+            }
+            if ch.loopert != n {
+                return;
+            }
+            drop(ch);
+
+            let locked_chunks = world.get_surrounding_chunks(i);
+            // Loop through the particles
+            let mut locked_chunk = locked_chunks[Chunk::get_index(3, 1, 1, 1)].lock().unwrap();
+            locked_chunk.particles.clone().iter_mut().for_each(|p| {
+                // Original node coord
+                // All particles must be between 0 and 
+                let ogn_coord = p.x.floor(); 
+                let ogn_diff = (p.x - ogn_coord) - 0.5;
+
+                let weights = [
+                    0.5 * (0.5 - ogn_diff).powf(2.),
+                    0.75 - (ogn_diff).powf(2.),
+                    0.5 * (0.5 + ogn_diff).powf(2.),
+                ];
+
+                let mut density: f32 = 0.;
+                for gx in 0..3 {
+                    for gy in 0..3 {
+                        for gz in 0..3 {
+                            let weight = weights[gx].x * weights[gy].y * weights[gz].z;
+
+                            let rn_coord = ogn_coord + Vec3A::new(gx as f32 - 1., gy as f32 - 1., gz as f32 - 1.);  
+                            let rc_coord = Chunk::in_bounds(rn_coord);
+
+                            if rc_coord != IVec3::ZERO {
+                                let c_index = Chunk::get_index(3, rc_coord.x + 1, rc_coord.y + 1, rc_coord.z + 1);
+                                // -1 + 1 is 0 so if its in a chunk to the right it will be 0
+                                // -1 + -1 is -2 and -2.rem(9) is 7 which would be the end
+                                let mut outer_chunk_x = rn_coord.x as i32;
+                                let mut outer_chunk_y = rn_coord.y as i32;
+                                let mut outer_chunk_z = rn_coord.z as i32;
+
+                                if rc_coord.x != 0 {outer_chunk_x = (-1 + rc_coord.x).rem_euclid(Chunk::width as i32 + 1);}
+                                if rc_coord.y != 0 {outer_chunk_y = (-1 + rc_coord.y).rem_euclid(Chunk::width as i32 + 1);}
+                                if rc_coord.z != 0 {outer_chunk_z = (-1 + rc_coord.z).rem_euclid(Chunk::width as i32 + 1);}
+
+                                let n_index = Chunk::get_index(Chunk::width, outer_chunk_x, outer_chunk_y, outer_chunk_z);
+                                let outside_chunky = locked_chunks[c_index].lock().unwrap();
+                                density += outside_chunky.nodes[n_index].m * weight;
+                            }
+                            // If the node is inside the chunk we don't do anything fancy
+                            else {
+                                let n_index = Chunk::get_index(Chunk::width ,rn_coord.x as i32, rn_coord.y as i32, rn_coord.z as i32);
+                                density += locked_chunk.nodes[n_index].m * weight;
+                            }
+                        }
+                    }
+                }
+                let volume = p.m / density;
+                let pressure = (-0.1_f32).max(eos_stiffness * (density / rest_density).powf(eos_power) - 1.);
+                // ! THIS IS 100% WRONG FOR 3D PLEASE HELP
+                let mut stress = Mat3A::from_cols_array(&[
+                                                        -pressure, 0., 0., 
+                                                        0., -pressure, 0.,
+                                                        0., 0., -pressure,
+                ]);
+                let mut strain = p.C;
+
+                let trace = strain.z_axis.x + strain.y_axis.y + strain.x_axis.x;
+                strain.x_axis.z = trace;
+                strain.y_axis.y = trace;
+                strain.z_axis.x = trace;
+
+                let viscosity_term = dynamic_viscosity * strain;
+                stress += viscosity_term;
+
+                let eq_16_term_0 = -volume * 4. * stress * dt;
+                for gx in 0..3 {
+                    for gy in 0..3 {
+                        for gz in 0..3 {
+                            let weight = weights[gx].x * weights[gy].y * weights[gz].z;
+                            let rn_coord = ogn_coord + Vec3A::new(gx as f32 - 1., gy as f32 - 1., gz as f32 - 1.);  
+                            let rc_coord = Chunk::in_bounds(rn_coord);
+
+                            if rc_coord != IVec3::ZERO {
+                                let c_index = Chunk::get_index(3, rc_coord.x + 1, rc_coord.y + 1, rc_coord.z + 1);
+                                // -1 + 1 is 0 so if its in a chunk to the right it will be 0
+                                // -1 + -1 is -2 and -2.rem(9) is 7 which would be the end
+                                let mut outer_chunk_x = rn_coord.x as i32;
+                                let mut outer_chunk_y = rn_coord.y as i32;
+                                let mut outer_chunk_z = rn_coord.z as i32;
+
+                                if rc_coord.x != 0 {outer_chunk_x = (-1 + rc_coord.x).rem_euclid(Chunk::width as i32 + 1);}
+                                if rc_coord.y != 0 {outer_chunk_y = (-1 + rc_coord.y).rem_euclid(Chunk::width as i32 + 1);}
+                                if rc_coord.z != 0 {outer_chunk_z = (-1 + rc_coord.z).rem_euclid(Chunk::width as i32 + 1);}
+                                 
+                                let cell_dist = (Vec3A::new(outer_chunk_x as f32, outer_chunk_y as f32, outer_chunk_z as f32) - p.x) + 0.5;
+                                let momentum = eq_16_term_0 * weight * cell_dist;
+
+                                let n_index = Chunk::get_index(Chunk::width, outer_chunk_x, outer_chunk_y, outer_chunk_z);
+                                let mut outside_chunky = locked_chunks[c_index].lock().unwrap();
+                                outside_chunky.nodes[n_index].v += Vec3A::from(momentum);
+                            }
+                            // If the node is inside the chunk we don't do anything fancy
+                            else {
+                                let cell_dist = (Vec3A::new(rn_coord.x as f32, rn_coord.y as f32, rn_coord.z as f32) - p.x) + 0.5;
+                                let momentum = eq_16_term_0 * weight * cell_dist;
+                                let n_index = Chunk::get_index(Chunk::width ,rn_coord.x as i32, rn_coord.y as i32, rn_coord.z as i32);
+                                locked_chunk.nodes[n_index].v += Vec3A::from(momentum);
+                            }
+                        }
+                    }
+                }
+            });
+            drop(locked_chunks);
+        });
+    }
 }
 
+fn update_grid (
+    world: ResMut<World>
+) {
+    for n in 0..Chunk::loopert_width*Chunk::loopert_width*Chunk::loopert_width {
+        world.chunks.par_iter().for_each(|(&i, c)| {
+            let mut chunk = c.lock().unwrap();
 
+            // If chunk shouldn't be updated or isn't part of the current batch don't do them
+            if !chunk.update {
+                return;
+            }
+            if chunk.loopert != n {
+                return;
+            }
 
-// // Reads all the surrounding chunks and puts them in a list
-// for j in 0..surrounding_chunk_offsets.len(){
-//     let coord = i + surrounding_chunk_offsets[j]; 
-//     let outside_chunk = world.chunks.get(&coord).unwrap().read().unwrap();
-//     locked_chunks.push(outside_chunk);
-// }
+            let locked_chunks = world.get_surrounding_chunks(i);
+            let mut update_list = vec![];
+            for i in 0..locked_chunks.len() {
+                if i == 13 {
+                    update_list.push(true);
+                    continue;
+                }
+                let temp_lock = locked_chunks[i].lock().unwrap();
+                update_list.push(temp_lock.update);
+                drop(temp_lock);
+            }
+            drop(locked_chunks);
+
+            for (i, node) in chunk.nodes.iter_mut().enumerate() {
+                node.v /= node.m;
+                node.v.y += dt * gravity; 
+
+                let pos = Chunk::pos_from_index(Chunk::width, i);
+                if !update_list[Chunk::get_index(3, 0, 1, 1)] {
+                    if pos.x < 2 {node.v.x = 0.}
+                }
+                else if !update_list[Chunk::get_index(3, 2, 1, 1)] {
+                    if pos.x > Chunk::width as i32 - 3 {node.v.x = 0.}
+                }
+                if !update_list[Chunk::get_index(3, 1, 0, 1)] {
+                    if pos.y < 2 {node.v.y = 0.}
+                }
+                else if !update_list[Chunk::get_index(3, 1, 2, 1)] {
+                    if pos.y > Chunk::width as i32 - 3 {node.v.y = 0.}
+                }
+                if !update_list[Chunk::get_index(3, 1, 1, 0)] {
+                    if pos.z < 2 {node.v.z = 0.}
+                }
+                else if !update_list[Chunk::get_index(3, 1, 1, 2)] {
+                    if pos.z > Chunk::width as i32 - 3 {node.v.z = 0.}
+                }
+            }
+        });
+    }
+}
+
+fn g2p (
+    world: ResMut<World>
+) {
+    for n in 0..Chunk::loopert_width*Chunk::loopert_width*Chunk::loopert_width {
+        world.chunks.par_iter().for_each(|(&i, c)| {
+            let ch = c.lock().unwrap();
+
+            // If chunk shouldn't be updated or isn't part of the current batch don't do them
+            if !ch.update {
+                return;
+            }
+            if ch.loopert != n {
+                return;
+            }
+            drop(ch);
+
+            let locked_chunks = world.get_surrounding_chunks(i);
+
+            let mut update_list = vec![];
+            for i in 0..locked_chunks.len() {
+                if i == 13 {
+                    update_list.push(true);
+                    continue;
+                }
+                let temp_lock = locked_chunks[i].lock().unwrap();
+                update_list.push(temp_lock.update);
+                drop(temp_lock);
+            }
+
+            // Loop through the particles
+            let locked_chunk = locked_chunks[Chunk::get_index(3, 1, 1, 1)].lock().unwrap();
+            locked_chunk.particles.clone().iter_mut().for_each(|p| {
+                // Original node coord
+                // All particles must be between 0 and 
+                p.v = Vec3A::ZERO;
+
+                let ogn_coord = p.x.floor(); 
+                let ogn_diff = (p.x - ogn_coord) - 0.5;
+
+                let weights = [
+                    0.5 * (0.5 - ogn_diff).powf(2.),
+                    0.75 - (ogn_diff).powf(2.),
+                    0.5 * (0.5 + ogn_diff).powf(2.),
+                ];
+                
+                let mut b: Mat3A = Mat3A::ZERO;
+                for gx in 0..3 {
+                    for gy in 0..3 {
+                        for gz in 0..3 {
+                            let weight = weights[gx].x * weights[gy].y * weights[gz].z;
+
+                            let rn_coord = ogn_coord + Vec3A::new(gx as f32 - 1., gy as f32 - 1., gz as f32 - 1.);  
+                            let rc_coord = Chunk::in_bounds(rn_coord);
+
+                            if rc_coord != IVec3::ZERO {
+                                let c_index = Chunk::get_index(3, rc_coord.x + 1, rc_coord.y + 1, rc_coord.z + 1);
+                                // -1 + 1 is 0 so if its in a chunk to the right it will be 0
+                                // -1 + -1 is -2 and -2.rem(9) is 7 which would be the end
+                                let mut outer_chunk_x = rn_coord.x as i32;
+                                let mut outer_chunk_y = rn_coord.y as i32;
+                                let mut outer_chunk_z = rn_coord.z as i32;
+
+                                if rc_coord.x != 0 {outer_chunk_x = (-1 + rc_coord.x).rem_euclid(Chunk::width as i32 + 1);}
+                                if rc_coord.y != 0 {outer_chunk_y = (-1 + rc_coord.y).rem_euclid(Chunk::width as i32 + 1);}
+                                if rc_coord.z != 0 {outer_chunk_z = (-1 + rc_coord.z).rem_euclid(Chunk::width as i32 + 1);}
+
+                                let outside_chunky = locked_chunks[c_index].lock().unwrap();
+
+                                let cell_dist = (Vec3A::new(outer_chunk_x as f32, outer_chunk_y as f32, outer_chunk_z as f32) - p.x) + 0.5;
+                                let n_index = Chunk::get_index(Chunk::width, outer_chunk_x, outer_chunk_y, outer_chunk_z);
+                                let w_v = outside_chunky.nodes[n_index].v * weight;
+                                let term = Mat3A::from_cols(w_v * cell_dist.x, w_v * cell_dist.y, w_v * cell_dist.z);
+                                b += term;
+                                p.v += w_v;
+                            }
+                            // If the node is inside the chunk we don't do anything fancy
+                            else {
+                                let cell_dist = (Vec3A::new(rn_coord.x as f32, rn_coord.y as f32, rn_coord.z as f32) - p.x) + 0.5;
+                                let n_index = Chunk::get_index(Chunk::width ,rn_coord.x as i32, rn_coord.y as i32, rn_coord.z as i32);
+                                let w_v = locked_chunk.nodes[n_index].v * weight;
+                                let term = Mat3A::from_cols(w_v * cell_dist.x, w_v * cell_dist.y, w_v * cell_dist.z);
+                                b += term;
+                                p.v += w_v;
+                            }
+                        }
+                    }
+                }
+                p.C = b.mul_scalar(4.);
+
+                p.x += Vec3A::from(p.v) * dt;
+
+                let x_n = p.x + p.v;
+
+                if !update_list[Chunk::get_index(3, 0, 1, 1)] {
+                    if p.x.x < 2. {p.v.x += 3. - x_n.x}
+                }
+                else if !update_list[Chunk::get_index(3, 2, 1, 1)] {
+                    if p.x.x > Chunk::width as f32 - 3. {p.v.x += 3. - x_n.x}
+                }
+                if !update_list[Chunk::get_index(3, 1, 0, 1)] {
+                    if p.x.y < 2. {p.v.y += 3. - x_n.y}
+                }
+                else if !update_list[Chunk::get_index(3, 1, 2, 1)] {
+                    if p.x.y > Chunk::width as f32 - 3. {p.v.y += 3. - x_n.y}
+                }
+                if !update_list[Chunk::get_index(3, 1, 1, 0)] {
+                    if p.x.z < 2. {p.v.z += 3. - x_n.z}
+                }
+                else if !update_list[Chunk::get_index(3, 1, 1, 2)] {
+                    if p.x.z > Chunk::width as f32 - 3. {p.v.z += 3. - x_n.z}
+                }
+            });
+            drop(locked_chunks);
+        });
+    }
+
+}
