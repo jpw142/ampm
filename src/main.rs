@@ -41,7 +41,7 @@ fn main() {
         .insert_resource(World::new())
         .insert_resource(ClearColor(Color::rgb(1., 1., 1.)))
         .add_systems(Startup, initialize)
-        .add_systems(Update, (clear_grid, p2g1, p2g2, update_grid, g2p).chain())
+        .add_systems(Update, ((clear_grid, p2g1, p2g2, update_grid, g2p).chain(), draw))
         .run();
 }
 
@@ -76,9 +76,6 @@ fn clear_grid(
     world.chunks.par_iter().for_each(|(_, c)| {
         let chunk = c.lock().unwrap();
         // If the chunk shouldn't be updated it shouldn't be cleared
-        if !chunk.update {
-            return;
-        }
         for mut node in chunk.nodes {
             node.zero(); 
         }
@@ -124,8 +121,10 @@ fn p2g1 (
 
                             let rn_coord = ogn_coord + Vec3A::new(gx as f32 - 1., gy as f32 - 1., gz as f32 - 1.);  
                             let rc_coord = Chunk::in_bounds(rn_coord);
+                            
+                            let node_dist = (rn_coord - p.x) + 0.5;
 
-                            let Q = p.C * ogn_diff;
+                            let Q = p.C * node_dist;
 
                             let m_contrib = weight * p.m;
 
@@ -281,7 +280,6 @@ fn p2g2 (
                     }
                 }
             });
-            drop(locked_chunks);
         });
     }
 }
@@ -430,9 +428,7 @@ fn g2p (
                     }
                 }
                 p.C = b.mul_scalar(4.);
-
                 p.x += Vec3A::from(p.v) * dt;
-
                 let x_n = p.x + p.v;
 
                 if !update_list[Chunk::get_index(3, 0, 1, 1)] {
@@ -458,4 +454,57 @@ fn g2p (
         });
     }
 
+}
+
+fn draw(
+    mut gizmos: Gizmos,
+    world: ResMut<World>,
+) {
+    world.chunks.iter().for_each(|(&i, c)| {
+        let chunk = c.lock().unwrap();
+        let mut color: Color;
+        match chunk.loopert {
+            0 => color = Color::BLUE,
+            1 => color = Color::RED,
+            2 => color = Color::CYAN,
+            3 => color = Color::GOLD,
+            4 => color = Color::MAROON,
+            5 => color = Color::NAVY,
+            6 => color = Color::VIOLET,
+            7 => color = Color::GREEN,
+            8 => color = Color::PINK,
+            9 => color = Color::FUCHSIA,
+            10 => color = Color::SEA_GREEN,
+            11 => color = Color::DARK_GRAY,
+            12 => color = Color::DARK_GREEN,
+            13 => color = Color::ANTIQUE_WHITE,
+            14 => color = Color::ORANGE,
+            15 => color = Color::MIDNIGHT_BLUE,
+            16 => color = Color::ORANGE_RED,
+            17 => color = Color::ALICE_BLUE,
+            18 => color = Color::LIME_GREEN,
+            19 => color = Color::YELLOW_GREEN,
+            20 => color = Color::ALICE_BLUE,
+            21 => color = Color::CRIMSON,
+            22 => color = Color::YELLOW,
+            23 => color = Color::TOMATO,
+            24 => color = Color::SALMON,
+            25 => color = Color::OLIVE,
+            26 => color = Color::TURQUOISE,
+            _ => color = Color::BLACK,
+        }
+       // if chunk.update == false {
+       //     return;
+       // }
+        for particle in &chunk.particles {
+            if particle.x.distance(Vec3A::ZERO) > 10. {
+                color = Color::BLUE;
+            }
+            else {
+                color = Color::BLACK;
+            }
+            print!("{:?}", particle.x);
+            gizmos.sphere(Vec3::new((i.x * Chunk::width as i32) as f32 + particle.x.x,(i.y * Chunk::width as i32) as f32 + particle.x.y,(i.z * Chunk::width as i32) as f32+ particle.x.z), Quat::IDENTITY, 0.25, color);
+        }
+    });
 }

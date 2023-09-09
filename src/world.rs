@@ -70,7 +70,7 @@ impl Chunk {
 }
 
 impl World {
-    const width: usize = 4;
+    const width: usize = 3;
     const map_chunks: usize = World::width * World::width * World::width;
     const surrounding_chunk_offsets: [IVec3; 27] = [
         IVec3::new(-1, -1, -1),
